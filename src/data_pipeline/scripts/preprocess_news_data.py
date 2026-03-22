@@ -15,6 +15,27 @@ def clean_text(text: str) -> str:
     return text
 
 
+def find_project_root(start_path: Path) -> Path:
+    """
+    Đi ngược từ file hiện tại lên trên để tìm thư mục gốc project.
+    Dựa vào các dấu hiệu như có thư mục 'data', 'src', và file 'README.md'.
+    """
+    current = start_path.resolve()
+
+    for parent in [current] + list(current.parents):
+        if (
+            (parent / "data").exists()
+            and (parent / "src").exists()
+            and (parent / "README.md").exists()
+        ):
+            return parent
+
+    raise FileNotFoundError(
+        "Không tìm thấy thư mục gốc project. "
+        "Hãy kiểm tra lại cấu trúc thư mục hoặc thêm --input thủ công."
+    )
+
+
 def preprocess_dataset(input_path: Path) -> pd.DataFrame:
     """Load raw JSONL news data and build a cleaned text classification frame."""
     df = pd.read_json(input_path, lines=True)
@@ -33,7 +54,6 @@ def preprocess_dataset(input_path: Path) -> pd.DataFrame:
 
     df["text"] = (df["headline"] + " " + df["short_description"]).map(clean_text)
 
-    # Keep only non-empty text/category rows.
     df = df[(df["text"].str.len() > 0) & (df["category"].str.len() > 0)]
 
     return df[["text", "category"]].reset_index(drop=True)
@@ -60,23 +80,29 @@ def make_splits(df: pd.DataFrame, test_size: float, val_size: float, random_stat
 
 
 def main() -> None:
+    project_root = find_project_root(Path(__file__).parent)
+
+    default_input = project_root / "data" / "raw" / "News_Category_Dataset_v3.json"
+    default_processed_output = project_root / "data" / "processed" / "news_processed.csv"
+    default_splits_dir = project_root / "data" / "splits"
+
     parser = argparse.ArgumentParser(description="Preprocess news dataset and create splits.")
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("data/raw/News_Category_Dataset_v3.json"),
+        default=default_input,
         help="Path to raw JSONL dataset",
     )
     parser.add_argument(
         "--processed-output",
         type=Path,
-        default=Path("data/processed/news_processed.csv"),
+        default=default_processed_output,
         help="Path to save cleaned full dataset CSV",
     )
     parser.add_argument(
         "--splits-dir",
         type=Path,
-        default=Path("data/splits"),
+        default=default_splits_dir,
         help="Directory to save train/val/test CSV files",
     )
     parser.add_argument("--test-size", type=float, default=0.1)
@@ -87,6 +113,9 @@ def main() -> None:
 
     if args.test_size <= 0 or args.val_size <= 0 or (args.test_size + args.val_size) >= 1:
         raise ValueError("test-size and val-size must be > 0 and sum to < 1")
+
+    if not args.input.exists():
+        raise FileNotFoundError(f"Không tìm thấy file input: {args.input}")
 
     args.processed_output.parent.mkdir(parents=True, exist_ok=True)
     args.splits_dir.mkdir(parents=True, exist_ok=True)
@@ -104,6 +133,8 @@ def main() -> None:
     val_df.to_csv(args.splits_dir / "val.csv", index=False)
     test_df.to_csv(args.splits_dir / "test.csv", index=False)
 
+    print(f"Project root: {project_root}")
+    print(f"Input file: {args.input}")
     print(f"Processed rows: {len(df):,}")
     print(f"Train rows: {len(train_df):,}")
     print(f"Val rows: {len(val_df):,}")
